@@ -126,7 +126,7 @@ async def get_system_metrics():
     from app.evaluation.rag_metrics import RAGMetricsCollector
 
     collector = RAGMetricsCollector()
-    metrics = collector.get_aggregated_metrics()
+    metrics = await collector.get_aggregated_metrics()
 
     return metrics
 
