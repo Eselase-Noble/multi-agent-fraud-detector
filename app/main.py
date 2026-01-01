@@ -14,6 +14,9 @@ from app.utils.logger import setup_logger
 from app.db.postgres import init_db, close_db
 from app.db.vector_store import init_vector_store
 
+#author: Noble Eselase Vulley
+#version: 1.0.0
+
 # Setup logger
 logger = setup_logger(__name__)
 load_dotenv()

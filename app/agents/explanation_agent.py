@@ -7,6 +7,9 @@ from app.models.openai_client import OpenAIClient
 from app.utils.logger import get_logger
 from app.utils.config import settings
 
+#author: Noble Eselase Vulley
+#version: 1.0.0
+
 logger = get_logger(__name__)
 
 

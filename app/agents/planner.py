@@ -9,6 +9,11 @@ from app.models.deepseek_client import DeepSeekClient
 from app.utils.logger import get_logger
 from app.api.schemas import AgentType, AgentPlan
 
+
+#author: Noble Eselase Vulley
+#version: 1.0.0
+
+
 logger = get_logger(__name__)
 
 
