@@ -39,6 +39,9 @@ class InvestigationResponse(BaseModel):
     execution_time: float = Field(..., description="Execution time in seconds")
 
 
+
+
+
 class StreamChunk(BaseModel):
     type: str = Field(..., description="Chunk type: plan, agent_result, explanation")
     content: Dict[str, Any] = Field(..., description="Chunk content")
@@ -77,7 +80,7 @@ async def start_investigation(
         # Log the response
         await audit_logger.log(
             user_id=request.user_id,
-            action="complete_investigation",
+            action=AuditAction.INVESTIGATION_COMPLETE,
             resource_type="investigation",
             resource_id=investigation_id,
             response_body=result

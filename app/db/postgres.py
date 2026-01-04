@@ -2,7 +2,7 @@ import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
@@ -32,22 +32,34 @@ class PostgreSQLManager:
                 dsn=settings.DATABASE_URL
             )
 
-            # Test connection
-            with self._get_connection() as conn:
+            # ✅ Direct pool usage for startup test
+            conn = self.connection_pool.getconn()
+            try:
                 with conn.cursor() as cur:
                     cur.execute("SELECT version();")
                     version = cur.fetchone()
                     logger.info(f"PostgreSQL connected: {version[0]}")
+            finally:
+                self.connection_pool.putconn(conn)
 
-            logger.info(f"PostgreSQL connection pool initialized (size: {self.pool_size})")
+            logger.info(
+                f"PostgreSQL connection pool initialized "
+                f"(size: {self.pool_size + self.max_overflow})"
+            )
 
         except Exception as e:
             logger.error(f"Failed to initialize PostgreSQL: {e}")
+            self.connection_pool = None
             raise
 
-    @contextmanager
+    @asynccontextmanager
     def _get_connection(self):
-        """Get connection from pool with context management."""
+        if self.connection_pool is None:
+            raise RuntimeError(
+                "PostgreSQL connection pool is not initialized. "
+                "Did you forget to await init_db() on startup?"
+            )
+
         conn = None
         try:
             conn = self.connection_pool.getconn()
@@ -62,7 +74,7 @@ class PostgreSQLManager:
     def get_connection(self):
         return self._get_connection
 
-    @contextmanager
+    @asynccontextmanager
     def _get_cursor(self, conn, cursor_factory=None):
         """Get cursor with context management."""
         cursor = None

@@ -5,6 +5,7 @@ import sys
 
 from app.utils.logger import get_logger
 from app.utils.config import settings
+from app.db.postgres import db_manager
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ class ServiceInitializer:
 
         try:
             # 1. Initialize PostgreSQL Database
-            from app.db.postgres import db_manager
+
             await db_manager.initialize()
             self.services["postgres"] = db_manager
             logger.info("✅ PostgreSQL initialized")
