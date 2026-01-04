@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -21,27 +22,58 @@ from app.db.vector_store import init_vector_store
 logger = setup_logger(__name__)
 load_dotenv()
 
+
+# In app/main.py, update the lifespan function:
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events."""
     # Startup
+    global db_manager, vector_store
     logger.info("Starting IntelliFraud Copilot...")
+
+    initialized = False
     try:
-        # Initialize databases
-        await init_db()
-        await init_vector_store()
-        logger.info("All services initialized successfully")
+        # Import here to avoid circular imports
+        from app.db.postgres import db_manager
+        from app.db.vector_store import vector_store
+
+        # Initialize with retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await db_manager.initialize()
+                await vector_store.initialize()
+                initialized = True
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Initialization attempt {attempt + 1} failed, retrying...: {e}")
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    raise
+
+        if initialized:
+            logger.info("✅ All services initialized successfully")
+        else:
+            logger.error("❌ Failed to initialize services after retries")
+
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}")
-        raise
+        # Don't crash - run in degraded mode
+        logger.warning("Running in degraded mode (database not available)")
 
     yield
 
     # Shutdown
     logger.info("Shutting down IntelliFraud Copilot...")
-    await close_db()
-    logger.info("Services closed successfully")
-
+    try:
+        if initialized:
+            await db_manager.close()
+            await vector_store.close()
+            logger.info("Services closed successfully")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
 
 
 # Create FastAPI app

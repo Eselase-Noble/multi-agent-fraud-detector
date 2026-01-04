@@ -1,11 +1,12 @@
 import json
 import asyncio
+from decimal import Decimal
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import numpy as np
 from dataclasses import dataclass
 
-from app.db.postgres import get_transaction_data
+from app.db.postgres import get_transaction_data, get_single_transaction
 from app.models.deepseek_client import DeepSeekClient
 from app.utils.logger import get_logger
 from app.utils.config import settings
@@ -18,6 +19,7 @@ from app.utils.config import settings
 logger = get_logger(__name__)
 
 
+# Near the top of the file, update the TransactionFeatures dataclass:
 @dataclass
 class TransactionFeatures:
     """Extracted features from transaction data."""
@@ -25,15 +27,14 @@ class TransactionFeatures:
     velocity_1h: float
     velocity_24h: float
     velocity_7d: float
-    geo_distance_km: Optional[float]
-    merchant_risk_score: float
-    time_of_day: float
-    day_of_week: int
-    is_weekend: bool
-    amount_deviation: float
-    category_risk: float
-    country_risk: float
-
+    geo_distance_km: Optional[float] = None  # Make Optional
+    merchant_risk_score: float = 0.0
+    time_of_day: float = 0.0
+    day_of_week: int = 0
+    is_weekend: bool = False
+    amount_deviation: float = 0.0
+    category_risk: float = 0.0
+    country_risk: float = 0.0
 
 @dataclass
 class AnomalyScores:
@@ -110,7 +111,7 @@ class TransactionAgent:
             logger.info(f"Analyzing transaction: {transaction_id}")
 
             # Get transaction data
-            transaction_data = await get_transaction_data(transaction_id)
+            transaction_data = await get_single_transaction(transaction_id)
             if not transaction_data:
                 return self._create_empty_analysis(transaction_id)
 
@@ -173,11 +174,27 @@ class TransactionAgent:
 
     async def _extract_features(self, transaction: Dict) -> TransactionFeatures:
         """Extract features from transaction data."""
-        # Get user's recent transactions for velocity calculation
-        recent_transactions = await get_transaction_data(
-            user_id=transaction["user_id"],
-            start_time=transaction["transaction_time"] - timedelta(days=7)
-        )
+        # Convert amount to float
+        amount = transaction.get("amount", 0)
+        if isinstance(amount, Decimal):
+            amount = float(amount)
+        elif not isinstance(amount, (int, float)):
+            amount = 0.0
+
+        # Get user's recent transactions
+        recent_transactions = []
+        user_id = transaction.get("user_id")
+        tx_time = transaction.get("transaction_time")
+
+        if user_id and tx_time:
+            try:
+                recent_transactions = await get_transaction_data(
+                    user_id=user_id,
+                    start_time=tx_time - timedelta(days=7),
+                    limit=100
+                )
+            except Exception as e:
+                logger.warning(f"Could not get recent transactions: {e}")
 
         # Calculate velocities
         velocity_1h = self._calculate_velocity(recent_transactions, hours=1)
@@ -186,65 +203,102 @@ class TransactionAgent:
 
         # Calculate geo distance
         geo_distance = await self._calculate_geo_distance(
-            transaction["user_country"],
-            transaction["merchant_country"],
+            transaction.get("user_country", ""),
+            transaction.get("merchant_country", ""),
             transaction.get("user_location"),
             transaction.get("merchant_location")
         )
 
+        # Convert geo_distance to float or None
+        if geo_distance is not None:
+            if isinstance(geo_distance, Decimal):
+                geo_distance = float(geo_distance)
+            elif not isinstance(geo_distance, (int, float)):
+                geo_distance = None
+
         # Calculate merchant risk
         merchant_risk = await self._calculate_merchant_risk(
-            transaction["merchant_id"],
-            transaction["merchant_category"]
+            transaction.get("merchant_id", ""),
+            transaction.get("merchant_category", "")
         )
+
+        # Ensure merchant_risk is float
+        if isinstance(merchant_risk, Decimal):
+            merchant_risk = float(merchant_risk)
+        elif not isinstance(merchant_risk, (int, float)):
+            merchant_risk = 0.0
 
         # Calculate amount deviation
-        amount_deviation = self._calculate_amount_deviation(
-            transaction["amount"],
-            recent_transactions
-        )
+        amount_deviation = self._calculate_amount_deviation(amount, recent_transactions)
 
         # Time features
-        tx_time = transaction["transaction_time"]
+        if isinstance(tx_time, str):
+            try:
+                tx_time = datetime.fromisoformat(tx_time.replace('Z', '+00:00'))
+            except:
+                tx_time = datetime.utcnow()
+        elif not isinstance(tx_time, datetime):
+            tx_time = datetime.utcnow()
+
         time_of_day = tx_time.hour + tx_time.minute / 60.0
         day_of_week = tx_time.weekday()
         is_weekend = day_of_week >= 5
 
         return TransactionFeatures(
-            amount=transaction["amount"],
-            velocity_1h=velocity_1h,
-            velocity_24h=velocity_24h,
-            velocity_7d=velocity_7d,
-            geo_distance_km=geo_distance,
-            merchant_risk_score=merchant_risk,
-            time_of_day=time_of_day,
-            day_of_week=day_of_week,
-            is_weekend=is_weekend,
-            amount_deviation=amount_deviation,
-            category_risk=self._category_risk_score(transaction["merchant_category"]),
-            country_risk=self._country_risk_score(transaction["merchant_country"])
+            amount=float(amount),
+            velocity_1h=float(velocity_1h),
+            velocity_24h=float(velocity_24h),
+            velocity_7d=float(velocity_7d),
+            geo_distance_km=float(geo_distance) if geo_distance is not None else None,
+            merchant_risk_score=float(merchant_risk),
+            time_of_day=float(time_of_day),
+            day_of_week=int(day_of_week),
+            is_weekend=bool(is_weekend),
+            amount_deviation=float(amount_deviation),
+            category_risk=float(self._category_risk_score(transaction.get("merchant_category", ""))),
+            country_risk=float(self._country_risk_score(transaction.get("merchant_country", "")))
         )
 
     async def _calculate_anomalies(self, features: TransactionFeatures, transaction: Dict) -> AnomalyScores:
         """Calculate anomaly scores for different dimensions."""
         # Velocity anomaly
-        normal_velocity = features.velocity_24h / 24  # Per hour
+        normal_velocity = features.velocity_24h / 24 if features.velocity_24h > 0 else 0.01  # Avoid division by zero
         velocity_ratio = features.velocity_1h / normal_velocity if normal_velocity > 0 else 0
-        velocity_score = min(1.0, velocity_ratio / self.velocity_threshold)
+        velocity_score = min(1.0, velocity_ratio / self.velocity_threshold) if self.velocity_threshold > 0 else 0.0
 
-        # Geo anomaly
+        # Geo anomaly - handle None and ensure it's float
         geo_score = 0.0
-        if features.geo_distance_km:
-            geo_score = min(1.0, features.geo_distance_km / self.geo_threshold_km)
+        if features.geo_distance_km is not None:
+            geo_distance = features.geo_distance_km
+            # Convert Decimal to float if needed
+            if isinstance(geo_distance, Decimal):
+                geo_distance = float(geo_distance)
+            elif not isinstance(geo_distance, (int, float)):
+                geo_distance = 0.0
 
-        # Amount anomaly
-        amount_score = min(1.0, features.amount_deviation / self.amount_threshold)
+            if self.geo_threshold_km > 0:
+                geo_score = min(1.0, geo_distance / self.geo_threshold_km)
+
+        # Amount anomaly - ensure amount_deviation is float
+        amount_deviation = features.amount_deviation
+        if isinstance(amount_deviation, Decimal):
+            amount_deviation = float(amount_deviation)
+        elif not isinstance(amount_deviation, (int, float)):
+            amount_deviation = 0.0
+
+        amount_score = 0.0
+        if self.amount_threshold > 0:
+            amount_score = min(1.0, amount_deviation / self.amount_threshold)
 
         # Time anomaly
         time_score = self._calculate_time_anomaly(features.time_of_day, features.day_of_week)
 
-        # Merchant risk
+        # Merchant risk - ensure it's float
         merchant_score = features.merchant_risk_score
+        if isinstance(merchant_score, Decimal):
+            merchant_score = float(merchant_score)
+        elif not isinstance(merchant_score, (int, float)):
+            merchant_score = 0.0
 
         # Behavioral anomaly (combination)
         behavioral_score = np.mean([
@@ -256,12 +310,12 @@ class TransactionAgent:
         ])
 
         return AnomalyScores(
-            velocity=velocity_score,
-            geo=geo_score,
-            amount=amount_score,
-            time=time_score,
-            merchant=merchant_score,
-            behavioral=behavioral_score
+            velocity=float(velocity_score),
+            geo=float(geo_score),
+            amount=float(amount_score),
+            time=float(time_score),
+            merchant=float(merchant_score),
+            behavioral=float(behavioral_score)
         )
 
     async def _llm_analysis(self, transaction: Dict, features: TransactionFeatures,
@@ -382,14 +436,33 @@ class TransactionAgent:
         return 0.3
 
     def _calculate_amount_deviation(self, amount: float, history: List[Dict]) -> float:
+        """Calculate amount deviation from historical average."""
         if not history:
             return 1.0
-        amounts = [t["amount"] for t in history]
+
+        # Ensure all amounts are floats
+        amounts = []
+        for t in history:
+            if isinstance(t.get("amount"), (int, float, Decimal)):
+                # Convert Decimal to float
+                amt = float(t["amount"])
+            else:
+                amt = 0.0
+            amounts.append(amt)
+
+        if isinstance(amount, Decimal):
+            amount = float(amount)
+
+        if not amounts:
+            return 1.0
+
         mean = np.mean(amounts)
         std = np.std(amounts) if len(amounts) > 1 else mean * 0.5
+
         if std == 0:
             return 0.0
-        return abs(amount - mean) / std
+
+        return abs(float(amount) - mean) / std
 
     def _calculate_time_anomaly(self, time_of_day: float, day_of_week: int) -> float:
         # Normal spending hours: 8 AM to 10 PM

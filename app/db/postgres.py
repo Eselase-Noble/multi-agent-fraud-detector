@@ -602,7 +602,27 @@ async def close_db():
     await db_manager.close()
 
 
-async def get_transaction_data(transaction_id: str) -> Optional[Dict[str, Any]]:
+# async def get_transaction_data(transaction_id: str) -> Optional[Dict[str, Any]]:
+#     """Get single transaction by ID."""
+#     transactions = await db_manager.get_transaction_data(transaction_id=transaction_id, limit=1)
+#     return transactions[0] if transactions else None
+
+# FIXED (Correct):
+async def get_transaction_data(transaction_id: str = None,
+                             user_id: str = None,
+                             start_time: Optional[datetime] = None,
+                             end_time: Optional[datetime] = None,
+                             limit: int = 100) -> Optional[List[Dict[str, Any]]]:
+    """Get transaction data with flexible filtering."""
+    return await db_manager.get_transaction_data(
+        transaction_id=transaction_id,
+        user_id=user_id,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit
+    )
+
+async def get_single_transaction(transaction_id: str) -> Optional[Dict[str, Any]]:
     """Get single transaction by ID."""
-    transactions = await db_manager.get_transaction_data(transaction_id=transaction_id, limit=1)
+    transactions = await get_transaction_data(transaction_id=transaction_id, limit=1)
     return transactions[0] if transactions else None
