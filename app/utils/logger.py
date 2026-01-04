@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
+from app.db.postgres import db_manager
+
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for structured logging."""

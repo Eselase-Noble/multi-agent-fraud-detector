@@ -40,8 +40,6 @@ class InvestigationResponse(BaseModel):
 
 
 
-
-
 class StreamChunk(BaseModel):
     type: str = Field(..., description="Chunk type: plan, agent_result, explanation")
     content: Dict[str, Any] = Field(..., description="Chunk content")
@@ -83,7 +81,7 @@ async def start_investigation(
             action=AuditAction.INVESTIGATION_COMPLETE,
             resource_type="investigation",
             resource_id=investigation_id,
-            response_body=result
+            response_body=result.model_dump()
         )
 
         return result

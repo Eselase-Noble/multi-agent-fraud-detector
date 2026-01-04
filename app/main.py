@@ -88,7 +88,7 @@ async def health_check() -> Dict[str, Any]:
     try:
         # Check database
         from app.db.postgres import db_manager
-        with db_manager.get_connection() as conn:
+        async with db_manager.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
 

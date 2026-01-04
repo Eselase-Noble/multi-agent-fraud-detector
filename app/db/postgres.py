@@ -52,7 +52,7 @@ class PostgreSQLManager:
             self.connection_pool = None
             raise
 
-    @asynccontextmanager
+    @contextmanager
     def _get_connection(self):
         if self.connection_pool is None:
             raise RuntimeError(
@@ -71,10 +71,21 @@ class PostgreSQLManager:
             if conn:
                 self.connection_pool.putconn(conn)
 
-    def get_connection(self):
-        return self._get_connection
-
     @asynccontextmanager
+    async def get_connection(self):
+        if self.connection_pool is None:
+            raise RuntimeError(
+                "PostgreSQL connection pool is not initialized. Did you forget to await init_db() on startup?"
+            )
+        conn = None
+        try:
+            conn = self.connection_pool.getconn()
+            yield conn
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+
+    @contextmanager
     def _get_cursor(self, conn, cursor_factory=None):
         """Get cursor with context management."""
         cursor = None
