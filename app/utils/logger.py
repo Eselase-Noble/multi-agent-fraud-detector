@@ -5,8 +5,6 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
-from app.db.postgres import db_manager
-
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for structured logging."""
@@ -117,17 +115,18 @@ def get_logger(name: str) -> logging.Logger:
 class AuditLoggerAdapter:
     """Adapter for audit logging."""
 
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger, db_manager=None):
         self.logger = logger
+        self.db_manager = db_manager
 
-    def log_audit_event(self,
-                        user_id: str,
-                        action: str,
-                        resource_type: str,
-                        resource_id: str,
-                        severity: str = "INFO",
-                        details: Optional[Dict[str, Any]] = None):
-        """Log audit event."""
+    async def log_audit_event(self,
+                              user_id: str,
+                              action: str,
+                              resource_type: str,
+                              resource_id: str,
+                              severity: str = "INFO",
+                              details: Optional[Dict[str, Any]] = None):
+        """Log audit event to console + DB (if ready)."""
         extra = {
             "audit": True,
             "user_id": user_id,
@@ -136,13 +135,31 @@ class AuditLoggerAdapter:
             "resource_id": resource_id,
             "severity": severity
         }
-
         if details:
             extra["details"] = details
 
+        # Console logging
         log_method = getattr(self.logger, severity.lower(), self.logger.info)
-        log_method(f"Audit: {action} by {user_id} on {resource_type}/{resource_id}",
-                   extra=extra)
+        log_method(f"Audit: {action} by {user_id} on {resource_type}/{resource_id}", extra=extra)
+
+        # DB logging if initialized
+        if self.db_manager and self.db_manager.connection_pool:
+            try:
+                await self.db_manager.log_audit_event({
+                    "user_id": user_id,
+                    "action": action,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "request_body": details or {},
+                    "response_body": {},
+                    "status_code": 200,
+                    "ip_address": "127.0.0.1",
+                    "user_agent": "system"
+                })
+            except Exception as e:
+                self.logger.warning(f"Failed to write audit log to DB: {e}", exc_info=True)
+        else:
+            self.logger.debug("PostgreSQL not ready: skipping DB audit")
 
 
 class PerformanceLogger:
