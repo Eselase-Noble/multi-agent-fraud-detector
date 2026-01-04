@@ -47,6 +47,7 @@ class AuditAction(str, Enum):
     INVESTIGATION_START = "investigation_start"
     INVESTIGATION_VIEW = "investigation_view"
     INVESTIGATION_UPDATE = "investigation_update"
+    INVESTIGATION_COMPLETE = "investigation_complete"
 
 
 class AuditSeverity(str, Enum):

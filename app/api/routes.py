@@ -1,3 +1,4 @@
+#routes.py
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -11,7 +12,7 @@ from app.agents.policy_rag_agent import PolicyRAGAgent
 from app.agents.fraud_reasoning_agent import FraudReasoningAgent
 from app.agents.explanation_agent import ExplanationAgent
 from app.security.pii_masking import PIIMasker
-from app.security.audit_log import AuditLogger
+from app.security.audit_log import AuditLogger, AuditAction
 from app.utils.logger import get_logger
 
 router = APIRouter()
@@ -57,7 +58,7 @@ async def start_investigation(
     masked_request = pii_masker.mask_dict(request.dict())
     await audit_logger.log(
         user_id=request.user_id,
-        action="start_investigation",
+        action=AuditAction.INVESTIGATION_START,
         resource_type="investigation",
         resource_id=investigation_id,
         request_body=masked_request

@@ -110,6 +110,12 @@ class TransactionAgent:
         try:
             logger.info(f"Analyzing transaction: {transaction_id}")
 
+            # Check if database is initialized
+            from app.db.postgres import db_manager
+            if db_manager.connection_pool is None:
+                logger.error("Database not initialized")
+                return self._create_error_analysis(transaction_id, "Database not available")
+
             # Get transaction data
             transaction_data = await get_single_transaction(transaction_id)
             if not transaction_data:
@@ -318,14 +324,16 @@ class TransactionAgent:
             behavioral=float(behavioral_score)
         )
 
+    # In app/agents/transaction_agent.py, improve the _llm_analysis method:
+
     async def _llm_analysis(self, transaction: Dict, features: TransactionFeatures,
                             anomalies: AnomalyScores, historical: Dict) -> Dict[str, Any]:
-        """Use LLM for pattern recognition and analysis."""
+        """Use DeepSeek for pattern recognition and analysis."""
         analysis_context = {
             "transaction": transaction,
-            "features": features.__dict__,
-            "anomalies": anomalies.__dict__,
-            "historical": historical
+            "features": self._convert_to_serializable(features.__dict__),
+            "anomalies": self._convert_to_serializable(anomalies.__dict__),
+            "historical": self._convert_to_serializable(historical)
         }
 
         messages = [
@@ -340,10 +348,49 @@ class TransactionAgent:
         )
 
         try:
-            return json.loads(response)
+            # Clean JSON response
+            cleaned_response = self._clean_json_response(response)
+            return json.loads(cleaned_response)
         except json.JSONDecodeError:
-            logger.warning("LLM returned invalid JSON, using fallback analysis")
-            return self._create_fallback_analysis(transaction, anomalies)
+            logger.warning("LLM returned invalid JSON, using rule-based reasoning")
+            return self._rule_based_analysis(transaction, anomalies)
+
+    def _convert_to_serializable(self, obj):
+        """Convert objects to JSON-serializable format."""
+        if isinstance(obj, (dict, list, str, int, float, bool, type(None))):
+            return obj
+        elif hasattr(obj, '__dict__'):
+            return self._convert_to_serializable(obj.__dict__)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, Decimal):
+            return float(obj)
+        else:
+            return str(obj)
+
+    def _clean_json_response(self, response: str) -> str:
+        """Clean JSON string from LLM response."""
+        import re
+
+        # Remove markdown code blocks
+        response = re.sub(r'```json\n?', '', response)
+        response = re.sub(r'\n?```', '', response)
+
+        # Remove anything before first { and after last }
+        start = response.find('{')
+        end = response.rfind('}') + 1
+
+        if start != -1 and end != 0:
+            response = response[start:end]
+
+        # Fix common JSON issues
+        response = re.sub(r',\s*}', '}', response)
+        response = re.sub(r',\s*]', ']', response)
+
+        # Fix unquoted property names
+        response = re.sub(r'(\s*)(\w+)(\s*):', r'\1"\2"\3:', response)
+
+        return response
 
     def _combine_analysis(self, transaction_id: str, transaction: Dict,
                           features: TransactionFeatures, anomalies: AnomalyScores,

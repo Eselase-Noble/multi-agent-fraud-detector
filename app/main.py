@@ -14,6 +14,9 @@ from app.utils.config import settings
 from app.utils.logger import setup_logger
 from app.db.postgres import init_db, close_db
 from app.db.vector_store import init_vector_store
+# Import here to avoid circular imports
+from app.db.postgres import db_manager
+from app.db.vector_store import vector_store
 
 #author: Noble Eselase Vulley
 #version: 1.0.0
@@ -22,56 +25,28 @@ from app.db.vector_store import init_vector_store
 logger = setup_logger(__name__)
 load_dotenv()
 
-
-# In app/main.py, update the lifespan function:
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events."""
     # Startup
-    global db_manager, vector_store
     logger.info("Starting IntelliFraud Copilot...")
 
-    initialized = False
     try:
-        # Import here to avoid circular imports
-        from app.db.postgres import db_manager
-        from app.db.vector_store import vector_store
-
-        # Initialize with retry logic
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                await db_manager.initialize()
-                await vector_store.initialize()
-                initialized = True
-                break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"Initialization attempt {attempt + 1} failed, retrying...: {e}")
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    raise
-
-        if initialized:
-            logger.info("✅ All services initialized successfully")
-        else:
-            logger.error("❌ Failed to initialize services after retries")
-
+        # Use the centralized initializer
+        from app.init import initializer
+        await initializer.initialize_all()
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}")
-        # Don't crash - run in degraded mode
-        logger.warning("Running in degraded mode (database not available)")
+        # Run in degraded mode - some features may not work
+        logger.warning("Running in degraded mode")
 
     yield
 
     # Shutdown
     logger.info("Shutting down IntelliFraud Copilot...")
     try:
-        if initialized:
-            await db_manager.close()
-            await vector_store.close()
-            logger.info("Services closed successfully")
+        from app.init import initializer
+        await initializer.close_all()
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
 
